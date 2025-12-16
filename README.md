@@ -20,9 +20,6 @@ Members:
 </center>
 
 
-&nbsp;
-<div  style="font-size: 23px; text-align:center; font-weight: bold">Abstract</div>  
-
 ---
 <p style="text-align: justify;">
 Effective population visualizations are essential for communicating future resource demands. This project examines an existing bar chart based on World Bank data that compares Asian population figures in 1995 and projected values for 2025. The original visualization relies on three-dimensional bars and inconsistent ordering, which hinders accurate comparison and obscures key growth patterns.
