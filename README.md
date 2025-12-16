@@ -13,7 +13,7 @@ Members:
 
 | Name      | Student ID  |Email|Roal|
 |-------------|-------------|--|--|
-| Qiao Ba  | | |leader|
+| Qiao Ba  |320230941671 |baq2023@lzu.edu.cn |leader|
 | Zhizhuo Yu  | |||
 |  Yaojie Tian | 320230942391|tianyj2023@lzu.edu.cn||
 
