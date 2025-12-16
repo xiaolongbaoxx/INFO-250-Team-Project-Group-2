@@ -23,11 +23,16 @@ Our goal is to redesign the visualization following information visualization pr
 - **Interactivity**: Add tooltips (for detailed population data) and an interactive Asian map (for spatial context).
 - **Readable Labels**: Use horizontal bar charts and standardized country abbreviations to avoid tilted reading.
 
-original figure：
+**original figure：**
+
+
 <img width="769" height="476" alt="256e145bba841317d2e9339169e40cee" src="https://github.com/user-attachments/assets/ff821fa9-dae2-40b6-9ce0-1533dd6fef7f" />
 
-our figure：
-<img width="416" height="223" alt="image" src="https://github.com/user-attachments/assets/f10381e4-65ce-4f34-b2d0-695d4a7786b5" />
+
+**our figure：**
+
+
+<img width="769" height="476" alt="image" src="https://github.com/user-attachments/assets/f10381e4-65ce-4f34-b2d0-695d4a7786b5" />
 
 
 ## 3. Quick Start
