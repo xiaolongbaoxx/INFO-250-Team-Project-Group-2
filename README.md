@@ -5,8 +5,8 @@ This is the README file for Team 2's Project 2 in the INFO 250 Information Visua
 ## 1. Team Members
 | Name         | Student ID       | Email                  | Role   |
 |--------------|------------------|------------------------|--------|
-| Qiao Ba      |                  |                        | Leader |
-| Zhizhuo Yu   |                  |                        | Member |
+| Qiao Ba      | 320230942391     | baq2023@lzu.edu.cn     | Leader |
+| Zhizhuo Yu   | 320230942661     | yuzhzh2023@lzu.edu.cn  | Member |
 | Yaojie Tian  | 320230942391     | tianyj2023@lzu.edu.cn  | Member |
 
 
