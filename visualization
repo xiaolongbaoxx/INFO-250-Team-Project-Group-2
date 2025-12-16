@@ -1,0 +1,494 @@
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from ipywidgets import widgets, VBox, HBox, Layout
+from IPython.display import display, HTML
+
+# ================== 数据准备 ==================
+countries = ['China', 'India', 'Indonesia', 'Bangladesh', 'Vietnam', 'Thailand',
+             'Myanmar', 'Japan', 'Philippines', 'Rep. of Korea', 'Pakistan', 'Asia']
+
+pop_1995 = np.array([1200, 950, 125, 2, 75, 60, 130, 200, 45, 120, 70, 2700])
+pop_2025 = np.array([1450, 1350, 125, 30, 110, 80, 250, 275, 65, 180, 120, 3800])
+
+df = pd.DataFrame({
+    'Country': countries,
+    'Pop_1995': pop_1995,
+    'Pop_2025': pop_2025
+})
+df['Growth'] = df['Pop_2025'] - df['Pop_1995']
+df['PctGrowth'] = np.where(df['Pop_1995'] > 0, df['Growth'] / df['Pop_1995'], 0.0)
+
+# ================== 国家简称（柱状图显示用）==================
+abbr_map = {
+    'China': 'CHN', 'India': 'IND', 'Indonesia': 'IDN', 'Bangladesh': 'BGD',
+    'Vietnam': 'VNM', 'Thailand': 'THA', 'Myanmar': 'MMR', 'Japan': 'JPN',
+    'Philippines': 'PHL', 'Rep. of Korea': 'KOR', 'Pakistan': 'PAK', 'Asia': 'ASIA'
+}
+df['Abbr'] = df['Country'].map(abbr_map)
+
+# ================== 柱状图数据：按人口排序（Asia 固定最后）==================
+sort_col = 'Pop_1995'   # <<< 想按2025就写 'Pop_2025'
+df_non_asia = df[df['Country'] != 'Asia'].sort_values(sort_col, ascending=False)
+df_asia = df[df['Country'] == 'Asia']
+df = pd.concat([df_non_asia, df_asia], ignore_index=True)
+
+# 国旗主色
+flag_main_colors = {
+    'China': '#D32F2F', 'India': '#FF9800', 'Indonesia': '#8B0000',
+    'Bangladesh': '#006A4E', 'Vietnam': '#FFD600', 'Thailand': '#1976D2',
+    'Myanmar': '#9CCC65', 'Japan': '#E0E0E0', 'Philippines': '#0D47A1',
+    'Rep. of Korea': '#26A69A', 'Pakistan': '#1B5E20', 'Asia': '#795548'
+}
+
+# ISO代码映射
+country_iso_map = {
+    'China': 'CHN', 'India': 'IND', 'Indonesia': 'IDN', 'Bangladesh': 'BGD',
+    'Vietnam': 'VNM', 'Thailand': 'THA', 'Myanmar': 'MMR', 'Japan': 'JPN',
+    'Philippines': 'PHL', 'Rep. of Korea': 'KOR', 'Pakistan': 'PAK'
+}
+
+# ================== 地图数据 df_map（不要 merge，避免 _x _y）==================
+df_map = df[df['Country'] != 'Asia'].sort_values('Pop_1995', ascending=False).copy()
+df_map['ISO_A3'] = df_map['Country'].map(country_iso_map)
+
+# 台湾并入中国（同色同数值）
+taiwan_row = df_map[df_map['Country'] == 'China'].iloc[0].copy()
+taiwan_row['ISO_A3'] = 'TWN'
+df_map = pd.concat([df_map, taiwan_row.to_frame().T], ignore_index=True)
+
+# ================== 亚洲底图（让“无数据国家”显示为白色）==================
+# 这层会把这些国家全部填成白色；有数据国家再用彩色层覆盖即可
+asia_base_iso = [
+    # 有数据国家 + TWN
+    'CHN','IND','IDN','BGD','VNM','THA','MMR','JPN','PHL','KOR','PAK','TWN',
+    # 其它亚洲国家（无数据）
+    'AFG','BHR','BTN','BRN','KHM','CYP','TLS','GEO','IRN','IRQ','ISR','JOR','KAZ','KWT','KGZ','LAO','LBN',
+    'MYS','MDV','MNG','NPL','PRK','OMN','QAT','SAU','SGP','LKA','SYR','TJK','TUR','TKM','ARE','UZB','YEM',
+    'RUS'
+]
+df_base_asia = pd.DataFrame({'ISO_A3': asia_base_iso, 'z': [0]*len(asia_base_iso)})
+
+# ================== 全局状态 ==================
+selected_country = None
+
+# ================== 颜色工具：按增长百分比调深浅（1995 浅、2025 深；印尼不变）==================
+def _hex_to_rgb(hex_color: str):
+    h = hex_color.lstrip('#')
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+def _rgb_to_hex(rgb):
+    r, g, b = [int(max(0, min(255, v))) for v in rgb]
+    return f'#{r:02X}{g:02X}{b:02X}'
+
+def blend_with_white(hex_color: str, t: float):
+    r, g, b = _hex_to_rgb(hex_color)
+    rr = 255 * (1 - t) + r * t
+    gg = 255 * (1 - t) + g * t
+    bb = 255 * (1 - t) + b * t
+    return _rgb_to_hex((rr, gg, bb))
+
+pos_pcts = df.loc[df['PctGrowth'] > 0, 'PctGrowth'].values
+max_pos_pct = float(pos_pcts.max()) if len(pos_pcts) else 1.0
+
+def _pct_to_t(pct: float, t_min: float, t_max: float):
+    if pct > 0:
+        s = min(pct / max_pos_pct, 1.0)
+        return t_min + (t_max - t_min) * s
+    return t_min
+
+def color_for_year(country: str, year: str):
+    base = flag_main_colors[country]
+    row = df.loc[df['Country'] == country].iloc[0]
+    pct = float(row['PctGrowth'])
+    growth = float(row['Growth'])
+
+    # 印尼增长为0：两年颜色完全一致
+    if country == 'Indonesia' and abs(growth) < 1e-9:
+        return blend_with_white(base, 0.60)
+
+    if year == '1995':
+        t = _pct_to_t(pct, t_min=0.28, t_max=0.55)
+    else:  # '2025'
+        t = _pct_to_t(pct, t_min=0.45, t_max=0.95)
+
+    return blend_with_white(base, t)
+
+# ================== 核心绘图函数：左柱右图（并排）==================
+def create_initial_figure():
+    fig = make_subplots(
+        rows=1, cols=2,
+        column_widths=[0.30, 0.70],
+        horizontal_spacing=0.06,
+        specs=[[{"type": "xy"}, {"type": "choropleth"}]]
+    )
+
+    # ========== 左侧：横向条形图 ==========
+    y_abbr = df['Abbr']
+    bar_thickness = 0.3
+
+    fig.add_trace(
+        go.Bar(
+            y=y_abbr, x=df['Pop_1995'],
+            orientation='h',
+            offsetgroup='1995',
+            width=bar_thickness,
+            marker=dict(
+                color=[color_for_year(c, '1995') for c in df['Country']],
+                line=dict(width=1.0, color='black')
+            ),
+            hovertemplate='<b>%{y}</b><br>1995: %{x} million<extra></extra>',
+            showlegend=False
+        ),
+        row=1, col=1
+    )
+
+    fig.add_trace(
+        go.Bar(
+            y=y_abbr, x=df['Pop_2025'],
+            orientation='h',
+            offsetgroup='2025',
+            width=bar_thickness,
+            marker=dict(
+                color=[color_for_year(c, '2025') for c in df['Country']],
+                line=dict(width=1.0, color='black')
+            ),
+            hovertemplate='<b>%{y}</b><br>2025: %{x} million<extra></extra>',
+            showlegend=False
+        ),
+        row=1, col=1
+    )
+
+    # ========== 右侧：先画“白色底图层”（无数据国家就是白色）==========
+    fig.add_trace(
+        go.Choropleth(
+            locations=df_base_asia['ISO_A3'],
+            z=df_base_asia['z'],
+            colorscale=[[0, '#FFFFFF'], [1, '#FFFFFF']],  # 全白
+            marker=dict(line=dict(color='rgba(80,80,80,0.35)', width=0.6)),
+            showscale=False,
+            hoverinfo='skip',
+            name='_base_white',
+            showlegend=False
+        ),
+        row=1, col=2
+    )
+
+    # ========== 右侧：再画“有数据国家彩色层”==========
+    fig_map = px.choropleth(
+        df_map,
+        locations='ISO_A3',
+        color='Country',
+        hover_name='Country',
+        hover_data={'Pop_1995': True, 'Pop_2025': True, 'Growth': True, 'ISO_A3': False, 'Country': False},
+        color_discrete_map={c: flag_main_colors[c] for c in df_map['Country']},
+        scope='asia'
+    )
+
+    fig_map.update_traces(
+        marker_opacity=0.9,
+        marker_line_color='black',
+        marker_line_width=1.3,
+        showscale=False,
+        showlegend=False,
+        hovertemplate=(
+            '<b>%{hovertext}</b><br>'
+            '1995: %{customdata[0]} million<br>'
+            '2025: %{customdata[1]} million<br>'
+            'Δ: %{customdata[2]} million'
+            '<extra></extra>'
+        )
+    )
+
+    for tr in fig_map.data:
+        tr.showlegend = False
+        fig.add_trace(tr, row=1, col=2)
+
+    # ========== 全局布局 ==========
+    fig.update_layout(
+        title=dict(
+            text="<b>Population Analysis of Asia - 1995 vs 2025</b>",
+            x=0.5,
+            font=dict(size=22, family="Arial Black"),
+            y=0.96
+        ),
+        barmode='group',
+        bargap=0.10,
+        bargroupgap=0.05,
+        showlegend=False,
+        height=880,
+        width=1600,
+        margin=dict(l=140, r=50, t=110, b=190),
+        plot_bgcolor='white',
+        paper_bgcolor='#f8f9fa',
+        font=dict(family="Arial", size=12),
+        hovermode='closest'
+    )
+
+    fig.update_yaxes(
+        title_text="",
+        tickfont=dict(family="Arial Black", size=11),
+        categoryorder='array',
+        categoryarray=list(df['Abbr']),
+        autorange='reversed',
+        row=1, col=1
+    )
+    fig.update_xaxes(
+        title_text="Population (million)",
+        range=[0, 4500],
+        tickfont=dict(family="Arial", size=11),
+        row=1, col=1
+    )
+
+    # ✅ 地图底色：改为白色（无数据国家就是白色底图层 + 白色陆地）
+    fig.update_geos(
+        scope="asia",                 # 关键：锁定到亚洲
+        projection=dict(type="equirectangular"),
+        showland=True,
+        landcolor="#FFFFFF",
+        showocean=True,
+        oceancolor="rgba(234,242,255,0.60)",
+        showcountries=True,
+        countrycolor="black",
+        countrywidth=0.6,
+        showcoastlines=True,
+        coastlinewidth=0.6,
+        center=dict(lon=100, lat=30),
+        lataxis_range=[-10, 60],
+        lonaxis_range=[40, 150],
+        row=1, col=2
+    )
+
+
+    
+    # ========== 最底部：简称 ↔ 全称 对照表（自动分行） ==========
+    abbr_pairs = [f"{abbr_map[c]} = {c}" for c in df['Country'].tolist() if c in abbr_map]
+
+    # 每行放几个（根据你宽度1600，建议 5~7）
+    per_line = 6
+    lines = []
+    for i in range(0, len(abbr_pairs), per_line):
+        lines.append("   |   ".join(abbr_pairs[i:i + per_line]))
+
+    abbr_text = "<b>Abbreviations:</b><br>" + "<br>".join(lines)
+    fig.add_annotation(
+    x=0.5, y=-0.15, xref="paper", yref="paper",
+    text=abbr_text,
+    showarrow=False,
+    align="center",
+    font=dict(size=11, family="Arial"),
+    )
+    # # ✅ 预留一个“Δ 注释”，后面 update_figure() 动态更新
+    # fig.add_annotation(
+    #     x=0, y=0,
+    #     xref="x", yref="y",   # 绑定到左侧条形图坐标系
+    #     text="",
+    #     showarrow=False,
+    #     font=dict(size=12, family="Arial Black"),
+    #     bgcolor="rgba(255,255,255,0.85)",
+    #     bordercolor="black",
+    #     borderwidth=1,
+    #     align="left",
+    #     visible=False
+    # )
+
+
+    return fig
+
+# ================== 更新：保留“选中高亮”（无 Δ 文字）==================
+def update_figure():
+    global selected_country
+    with fig_widget.batch_update():
+        bar_1995 = fig_widget.data[0]
+        bar_2025 = fig_widget.data[1]
+        map_traces = [tr for tr in fig_widget.data if tr.type == 'choropleth']  # 包含白底层 + 彩色层
+
+        if selected_country == 'Asia':
+            selected_set = set(df['Country'].tolist())
+        elif selected_country is None:
+            selected_set = set()
+        else:
+            selected_set = {selected_country}
+
+        c95_list, c25_list = [], []
+        for c in df['Country'].values:
+            c95 = color_for_year(c, '1995')
+            c25 = color_for_year(c, '2025')
+
+            if selected_country is None:
+                c95_list.append(c95)
+                c25_list.append(c25)
+            else:
+                if c in selected_set:
+                    c95_list.append(c95)
+                    c25_list.append(c25)
+                else:
+                    c95_list.append(blend_with_white(flag_main_colors[c], 0.15))
+                    c25_list.append(blend_with_white(flag_main_colors[c], 0.18))
+        # 先恢复固定注释（包含你底部简称对照表）
+        annots = list(BASE_ANNOTS)
+
+        # ---- 2) 生成“选中行”的Δ注释（绑到左侧柱状图坐标轴 x1/y1）----
+        row = df[df["Country"] == selected_country]
+        if (selected_country is not None) and (not row.empty):
+            r = row.iloc[0]
+            abbr = r["Abbr"]
+            dg = int(r["Growth"])
+
+            # 让Δ永远在该行柱子的“右侧一点点”
+            x_max = float(max(r["Pop_1995"], r["Pop_2025"]))
+            x_pad = 0.03 * 4500  # 4500是你x轴range上限；想更近就改 0.02
+            x_pos = min(x_max + x_pad, 4500 * 0.98)  # 防止超出坐标轴被裁掉
+
+            annots.append(dict(
+                xref="x1", yref="y1",
+                x=x_pos, y=abbr,
+                text=f"<b>Δ {dg:+d}</b>",       # ✅只显示Δ，不显示百分比
+                showarrow=False,
+                xanchor="left",
+                align="left",
+                font=dict(size=13, family="Arial Black"),  # ✅稍微加粗
+                bgcolor="rgba(255,255,255,0.75)",          # ✅避免压在柱子上看不清
+                bordercolor="rgba(0,0,0,0)",
+            ))
+
+        # ---- 3) 一次性回写 annotations（固定+动态Δ）----
+        fig_widget.layout.annotations = tuple(annots)
+
+
+
+        bar_1995.marker.color = c95_list
+        bar_2025.marker.color = c25_list
+
+        # 地图透明度：白底层固定不动；只对彩色层（name=国家名）做淡化
+        for tr in map_traces:
+            if tr.name == '_base_white':
+                tr.marker.opacity = 1.0
+                continue
+
+            if selected_country is None:
+                tr.marker.opacity = 0.9
+            elif selected_country == 'Asia':
+                tr.marker.opacity = 1.0
+            else:
+                tr.marker.opacity = 1.0 if tr.name == selected_country else 0.2
+        # ================== ✅ 更新“Δ 注释”显示在选中国家那一行（右侧不重叠） ==================
+        delta_anno = fig_widget.layout.annotations[-1]
+
+        if (selected_country is None) or (selected_country == 'Asia'):
+            delta_anno.visible = False
+            delta_anno.text = ""
+        else:
+            row = df[df['Country'] == selected_country]
+            if row.empty:
+                delta_anno.visible = False
+                delta_anno.text = ""
+            else:
+                p95 = float(row['Pop_1995'].iloc[0])
+                p25 = float(row['Pop_2025'].iloc[0])
+                dg  = float(row['Growth'].iloc[0])
+
+                # ✅ 让Δ永远在柱子“右侧空白区域”，避免压住柱子
+                xmax = max(p95, p25)
+                x_right = fig_widget.layout.xaxis.range[1]   # 你设置的是 4500
+                pad = 0.03 * x_right                         # 右移距离（可调：0.04~0.10）
+
+                # 最终位置：max(柱子末端+pad, x轴右边界-留白)
+                x_pos = min(xmax + pad, x_right - 0.02 * x_right)
+
+                # ✅ y 用 Abbr 定位到这一行
+                y_pos = abbr_map[selected_country]
+
+                delta_anno.x = x_pos
+                delta_anno.y = y_pos
+                delta_anno.xref = "x"
+                delta_anno.yref = "y"
+
+                # ✅ 只显示 Δ，不显示百分比
+                delta_anno.text = f"Δ {dg:+.0f}"
+
+                # ✅ 稍微加粗：用更粗字体族 + 增大字号
+                delta_anno.font = dict(size=14, family="Arial Black", color="black")
+
+                # ✅ 不要背景框（更不容易挡住柱子），也可以保留但设透明
+                delta_anno.bgcolor = "rgba(255,255,255,0.0)"
+                delta_anno.borderwidth = 0
+
+                delta_anno.visible = True
+
+# ================== 控件 ==================
+selected_label = widgets.HTML(
+    value="<b>No country selected</b>",
+    layout=Layout(margin='10px 0 0 20px', height='40px')
+)
+
+clear_btn = widgets.Button(
+    description="Clear selection",
+    layout=Layout(width='160px', height='40px')
+)
+
+def on_clear(_):
+    global selected_country
+    selected_country = None
+    selected_label.value = "<b>No country selected</b>"
+    update_figure()
+
+clear_btn.on_click(on_clear)
+
+# ================== 点击事件 ==================
+def on_map_click(trace, points, selector):
+    global selected_country
+    # 点到白底层不响应
+    if trace.name == '_base_white':
+        return
+
+    if points.point_inds:
+        selected_country = trace.name
+        row = df[df['Country'] == selected_country]
+        if not row.empty:
+            p95 = int(row['Pop_1995'].iloc[0])
+            p25 = int(row['Pop_2025'].iloc[0])
+            dg = int(row['Growth'].iloc[0])
+            pct = float(row['PctGrowth'].iloc[0]) * 100
+            selected_label.value = f"✨ <b>Selected: {selected_country}</b> (1995: {p95} | 2025: {p25} | Δ {dg:+d} | {pct:+.1f}%)"
+        else:
+            selected_label.value = f"✨ <b>Selected: {selected_country}</b>"
+        update_figure()
+
+def on_bar_click(trace, points, selector):
+    global selected_country
+    if points.point_inds:
+        idx = points.point_inds[0]
+        selected_country = df.iloc[idx]['Country']
+        p95 = int(df.iloc[idx]['Pop_1995'])
+        p25 = int(df.iloc[idx]['Pop_2025'])
+        dg = int(df.iloc[idx]['Growth'])
+        pct = float(df.iloc[idx]['PctGrowth']) * 100
+        selected_label.value = f"✨ <b>Selected: {selected_country}</b> (1995: {p95} | 2025: {p25} | Δ {dg:+d} | {pct:+.1f}%)"
+        update_figure()
+
+# ================== 初始化与绑定 ==================
+fig_widget = go.FigureWidget(create_initial_figure())
+BASE_ANNOTS = list(fig_widget.layout.annotations)  # 保存底部对照表等“固定注释”
+
+
+for tr in fig_widget.data:
+    if tr.type == 'choropleth':
+        tr.on_click(on_map_click)
+
+fig_widget.data[0].on_click(on_bar_click)
+fig_widget.data[1].on_click(on_bar_click)
+
+# ================== 显示 ==================
+display(HTML("""
+<style>
+.widget-label { font-size: 16px !important; }
+</style>
+"""))
+
+display(VBox([
+    HBox([clear_btn, selected_label], layout=Layout(justify_content='center')),
+    fig_widget
+], layout=Layout(align_items='center', width='100%', margin='20px 0')))
